@@ -4,6 +4,7 @@ from google import genai
 from google.genai import types
 from prompts import system_prompt
 from call_function import available_functions, call_function
+from config import MAX_ITERATIONS
 
 def main():
     load_dotenv()
@@ -29,8 +30,22 @@ def main():
 
     messages = [types.Content(role="user", parts=[types.Part(text=prompt)]),]
 
+    for _ in range(MAX_ITERATIONS):
+        try:
+            final_response = generate_content(client, messages, verbose)
+            if final_response:
+                print(f"Final Response: {final_response}")
+                return
+        except Exception as e:
+            print(f"Error generating content: {e}")
+    
+    print(f"Max number of iterations reached ({MAX_ITERATIONS})! Cancelling prompt to conserve tokens...")
+    sys.exit(1)
+
+
+def generate_content(client, messages, verbose):
     response = client.models.generate_content(
-        model="gemini-2.5-flash-lite", # gemini-2.0-flash-001
+        model="gemini-2.5-flash-lite", # gemini-2.0-flash-001 (old model to be phased out)
         contents=messages,
         config=types.GenerateContentConfig(tools=[available_functions], system_instruction=system_prompt),
         )
@@ -39,13 +54,16 @@ def main():
         raise RuntimeError("API request appears to have failed")
 
     if verbose:
-        print(f"User prompt: {prompt}")
         print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
         print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
-        
+
+    if response.candidates:
+        for candidate in response.candidates:
+            if candidate.content:
+                messages.append(candidate.content)
+
     if not response.function_calls:
-        print(f"Response:\n{response.text}")
-        return
+        return response.text
 
     function_responses = []
     for call in response.function_calls:
@@ -55,6 +73,8 @@ def main():
         function_responses.append(function_call_result.parts[0])
         if verbose:
             print(f"-> {function_call_result.parts[0].function_response.response}")
+
+    messages.append(types.Content(role="user", parts=function_responses))
 
 
 
